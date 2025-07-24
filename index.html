@@ -4,11 +4,12 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Synchronized Movie Night</title>
+    <!-- Firebase SDKs -->
     <script src="https://www.gstatic.com/firebasejs/9.6.1/firebase-app-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/9.6.1/firebase-firestore-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/9.6.1/firebase-analytics-compat.js"></script>
+
     <style>
-        /* CSS for making the page look nice */
         body {
             font-family: Arial, sans-serif;
             display: flex;
@@ -35,11 +36,11 @@
         }
         video {
             width: 100%;
-            max-width: 760px; /* Adjust as needed */
+            max-width: 760px;
             height: auto;
             border-radius: 5px;
             box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
-            background-color: black; /* Placeholder for video loading */
+            background-color: black;
         }
         #message {
             margin-top: 20px;
@@ -69,6 +70,30 @@
             background-color: #cccccc;
             cursor: not-allowed;
         }
+        .share-link-container {
+            margin-top: 30px;
+            padding-top: 20px;
+            border-top: 1px solid #eee;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            width: 100%;
+        }
+        #shareLinkInput {
+            width: calc(100% - 20px);
+            max-width: 500px;
+            padding: 10px;
+            margin-bottom: 10px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            font-size: 0.9em;
+        }
+        #copyLinkButton {
+            background-color: #28a745;
+        }
+        #copyLinkButton:hover {
+            background-color: #218838;
+        }
     </style>
 </head>
 <body>
@@ -76,60 +101,73 @@
         <h1>Synchronized Movie Night</h1>
         <p id="message">Loading video and connecting...</p>
         <video id="moviePlayer" controls crossorigin="anonymous">
-            <source src="movie.mp4" type="video/mp4">
+            <!--
+                WARNING: This Google Drive link is highly unlikely to work for direct video streaming
+                due to Google Drive's CORS policies and its design for file viewing/download,
+                not direct embedding in a custom HTML5 video player.
+                You will likely see CORS errors in the browser console.
+            -->
+            <source src="https://drive.google.com/uc?export=download&id=1d-x5mInhhDy90GwRlCkjrwf2OXnT6bp4" type="video/mp4">
             Your browser does not support the video tag.
         </video>
         <div class="controls">
             <button id="playPauseButton">Play/Pause</button>
             <button id="syncButton">Sync Now</button>
         </div>
+
+        <div class="share-link-container">
+            <h2>Share This Video!</h2>
+            <input type="text" id="shareLinkInput" readonly>
+            <button id="copyLinkButton">Copy Link</button>
+            <p style="font-size:0.8em; color:#777; margin-top:5px;">Share this link with your friends to watch together.</p>
+        </div>
     </div>
 
     <script>
-        // --- YOUR FIREBASE CONFIGURATION GOES HERE ---
-        // REPLACE this entire 'firebaseConfig' block with the code you copied from Firebase in Part 1, Step 4.
+        // --- YOUR FIREBASE CONFIGURATION ---
         const firebaseConfig = {
-       apiKey: "AIzaSyAyWTKP11TuLk122WPU6bmbs9D2UFY88HU",
-  authDomain: "irsgrlgsdcbv.firebaseapp.com",
-  projectId: "irsgrlgsdcbv",
-  storageBucket: "irsgrlgsdcbv.firebasestorage.app",
-  messagingSenderId: "27802975299",
-  appId: "1:27802975299:web:6434e04bf92bb26e8fe8f6"
+            apiKey: "AIzaSyAyWTKP11TuLk122WPU6bmbs9D2UFY88HU",
+            authDomain: "irsgrlgsdcbv.firebaseapp.com",
+            projectId: "irsgrlgsdcbv",
+            storageBucket: "irsgrlgsdcbv.firebasestorage.app",
+            messagingSenderId: "27802975299",
+            appId: "1:27802975299:web:6434e04bf92bb26e8fe8f6"
         };
 
-        // Initialize Firebase - DON'T CHANGE THESE LINES
+        // Initialize Firebase
         firebase.initializeApp(firebaseConfig);
         const db = firebase.firestore();
 
-        // Get the video player and other elements from the page
         const video = document.getElementById('moviePlayer');
         const messageDisplay = document.getElementById('message');
         const playPauseButton = document.getElementById('playPauseButton');
         const syncButton = document.getElementById('syncButton');
+        const shareLinkInput = document.getElementById('shareLinkInput');
+        const copyLinkButton = document.getElementById('copyLinkButton');
 
-        // This is the specific "spot" in Firebase where we'll store the video's status
+        // Firestore document to store video state
         const videoStateRef = db.collection('videoSessions').doc('mainSession');
 
-        let isUpdatingFirebase = false; // A flag to prevent endless loops
+        let isUpdatingFirebase = false; // Flag to prevent infinite loops
+        let lastRemoteTime = 0; // To track the last synced time for seeking restriction
 
-        // --- Firebase Real-time Listener (What happens when Firebase tells us something) ---
+        // --- Firebase Real-time Listener ---
         videoStateRef.onSnapshot((doc) => {
-            if (doc.exists) { // Check if the mainSession document exists in Firebase
+            if (doc.exists) {
                 const data = doc.data();
                 if (data) {
-                    // Use current time for message display, not fixed example.
                     messageDisplay.textContent = `Last update from server: ${new Date(data.timestamp).toLocaleTimeString()}`;
+                    lastRemoteTime = data.currentTime; // Update our remote time tracker
 
-                    // Only update our video player if WE didn't just send the update to Firebase
                     if (!isUpdatingFirebase) {
-                        // Sync Play/Pause
+                        // Synchronize play/pause
                         if (data.isPlaying && video.paused) {
                             video.play().catch(e => console.error("Error playing video:", e));
                         } else if (!data.isPlaying && !video.paused) {
                             video.pause();
                         }
 
-                        // Sync Current Time (if our time is too different from Firebase's)
+                        // Synchronize current time with a small tolerance
                         const timeDifference = Math.abs(video.currentTime - data.currentTime);
                         if (timeDifference > 1.5) { // If difference is more than 1.5 seconds
                             console.log(`Syncing time: Local ${video.currentTime.toFixed(2)}, Remote ${data.currentTime.toFixed(2)}`);
@@ -138,12 +176,11 @@
                     }
                 }
             } else {
-                // If no video state exists in Firebase yet, create it
                 messageDisplay.textContent = "No video state found in Firebase. Initializing...";
                 videoStateRef.set({
                     isPlaying: false,
                     currentTime: 0,
-                    timestamp: Date.now() // Use current time
+                    timestamp: Date.now()
                 }).then(() => console.log("Initial video state set."));
             }
         }, (error) => {
@@ -151,86 +188,94 @@
             messageDisplay.textContent = "Error connecting to Firebase. Check console for details.";
         });
 
-        // --- Video Event Listeners (What happens when OUR video player changes) ---
+        // --- Video Event Listeners (to update Firebase) ---
 
-        // When our video starts playing
         video.addEventListener('play', () => {
-            isUpdatingFirebase = true; // Set flag: we are about to update Firebase
+            isUpdatingFirebase = true;
             videoStateRef.update({
                 isPlaying: true,
                 currentTime: video.currentTime,
-                timestamp: Date.now() // Use current time
+                timestamp: Date.now()
             }).then(() => {
-                isUpdatingFirebase = false; // Reset flag after update is sent
+                isUpdatingFirebase = false;
             }).catch(e => {
                 console.error("Error updating play state:", e);
-                isUpdatingFirebase = false; // Reset flag even on error
+                isUpdatingFirebase = false;
             });
         });
 
-        // When our video pauses
         video.addEventListener('pause', () => {
-            isUpdatingFirebase = true; // Set flag
+            isUpdatingFirebase = true;
             videoStateRef.update({
                 isPlaying: false,
                 currentTime: video.currentTime,
-                timestamp: Date.now() // Use current time
+                timestamp: Date.now()
             }).then(() => {
-                isUpdatingFirebase = false; // Reset flag
+                isUpdatingFirebase = false;
             }).catch(e => {
                 console.error("Error updating pause state:", e);
-                isUpdatingFirebase = false; // Reset flag
+                isUpdatingFirebase = false;
             });
         });
 
-        // Periodically update current time to Firebase (less frequently for performance)
         let updateTimer;
         video.addEventListener('timeupdate', () => {
-            // Only update if video is playing AND we're not currently updating from Firebase
             if (video.paused || isUpdatingFirebase) return;
 
-            // Wait a bit before sending time updates to Firebase to avoid too many writes
+            // Restrict seeking forward: if the user tries to go too far ahead, snap them back.
+            // Allow a small buffer (e.g., 2 seconds)
+            if (video.currentTime > lastRemoteTime + 2 && video.currentTime > 2) { // Allow slight buffer, but not if at very start
+                console.warn(`User tried to seek too far forward (${video.currentTime.toFixed(2)}s). Snapping back to ${lastRemoteTime.toFixed(2)}s.`);
+                video.currentTime = lastRemoteTime;
+                video.pause(); // Optional: pause them if they try to jump ahead
+            }
+
             clearTimeout(updateTimer);
             updateTimer = setTimeout(() => {
-                isUpdatingFirebase = true; // Set flag
+                isUpdatingFirebase = true;
                 videoStateRef.update({
                     currentTime: video.currentTime,
-                    timestamp: Date.now() // Use current time
+                    timestamp: Date.now()
                 }).then(() => {
-                    isUpdatingFirebase = false; // Reset flag
+                    isUpdatingFirebase = false;
                 }).catch(e => {
                     console.error("Error updating time:", e);
-                    isUpdatingFirebase = false; // Reset flag
+                    isUpdatingFirebase = false;
                 });
             }, 1000); // Update every 1 second
         });
 
-        // When user seeks the video (drags the playhead)
+        // For when user explicitly seeks the video (drags the playhead)
         video.addEventListener('seeking', () => {
-            isUpdatingFirebase = true; // Set flag
+            // Similar seek restriction as timeupdate, but more immediate for seeking action
+            if (video.currentTime > lastRemoteTime + 2 && video.currentTime > 2) {
+                console.warn(`User tried to seek too far forward (${video.currentTime.toFixed(2)}s). Snapping back to ${lastRemoteTime.toFixed(2)}s.`);
+                video.currentTime = lastRemoteTime;
+                video.pause(); // Optional: pause them if they try to jump ahead
+            }
+
+            isUpdatingFirebase = true;
             videoStateRef.update({
                 currentTime: video.currentTime,
-                timestamp: Date.now() // Use current time
+                timestamp: Date.now()
             }).then(() => {
-                isUpdatingFirebase = false; // Reset flag
+                isUpdatingFirebase = false;
             }).catch(e => {
                 console.error("Error updating seek state:", e);
-                isUpdatingFirebase = false; // Reset flag
+                isUpdatingFirebase = false;
             });
         });
 
-        // --- Manual Controls (buttons on the page) ---
+        // --- Manual Controls ---
         playPauseButton.addEventListener('click', () => {
             if (video.paused) {
                 video.play();
             } else {
                 video.pause();
             }
-            // Note: The 'play' and 'pause' event listeners above will handle updating Firebase.
         });
 
         syncButton.addEventListener('click', () => {
-            // Get the very latest state from Firebase and apply it to our video
             videoStateRef.get().then(doc => {
                 if (doc.exists) {
                     const data = doc.data();
@@ -250,14 +295,40 @@
             });
         });
 
-        // Initial messages for video loading
+        // --- Share Link Logic ---
+        document.addEventListener('DOMContentLoaded', () => {
+            // Set the input field's value to the current page's URL
+            shareLinkInput.value = window.location.href;
+        });
+
+        copyLinkButton.addEventListener('click', () => {
+            // Select the text in the input field
+            shareLinkInput.select();
+            shareLinkInput.setSelectionRange(0, 99999); // For mobile devices
+
+            // Copy the text to the clipboard
+            // Using document.execCommand('copy') as navigator.clipboard.writeText() might not work in some iframe contexts
+            try {
+                document.execCommand('copy');
+                copyLinkButton.textContent = 'Copied!';
+                setTimeout(() => {
+                    copyLinkButton.textContent = 'Copy Link';
+                }, 2000); // Change back after 2 seconds
+            } catch (err) {
+                console.error('Failed to copy text using execCommand: ', err);
+                alert('Could not copy link automatically. Please manually copy the link from the box.');
+            }
+        });
+
+
+        // Initial check and message
         video.onloadeddata = () => {
             messageDisplay.textContent = "Video loaded. Connecting to Firebase...";
         };
 
         video.onerror = (e) => {
             console.error("Video Error:", e);
-            messageDisplay.textContent = "Error loading video. Please ensure 'movie.mp4' is in the same directory as this HTML file on the server.";
+            messageDisplay.textContent = "Error loading video. Please ensure the video URL is correct and publicly accessible (e.g., Firebase Storage). If using Google Drive, it is likely blocked by CORS.";
         };
 
     </script>
